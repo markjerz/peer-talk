@@ -863,6 +863,17 @@ namespace PeerTalk
         async void OnRemoteConnect(Stream stream, MultiAddress local, MultiAddress remote)
 #pragma warning restore VSTHRD100 // Avoid async void methods
         {
+            await ConnectRemoteAsync(stream, local, remote);
+        }
+
+        /// <summary>
+        /// Create Peer Connection with already established stream
+        /// </summary>
+        /// <param name="stream"></param>
+        /// <param name="local"></param>
+        /// <param name="remote"></param>
+        public async Task ConnectRemoteAsync(Stream stream, MultiAddress local, MultiAddress remote)
+        {
             if (!IsRunning)
             {
                 try
