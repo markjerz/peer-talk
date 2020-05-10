@@ -777,7 +777,7 @@ namespace PeerTalk
             {
                 if (this.transportRegistry.Transports.TryGetValue(protocol.Name, out Func<IPeerTransport> transport))
                 {
-                    address = transport().Listen(address, OnRemoteConnect, cancel.Token);
+                    address = transport().Listen(address, OnRemoteConnectAsync, cancel.Token);
                     listeners.TryAdd(address, cancel);
                     didSomething = true;
                     break;
@@ -864,7 +864,7 @@ namespace PeerTalk
         ///   Establishes the protocols of the connection.  Any exception is simply
         ///   logged as warning.
         /// </remarks>
-        async void OnRemoteConnect(Stream stream, MultiAddress local, MultiAddress remote)
+        async Task OnRemoteConnectAsync(Stream stream, MultiAddress local, MultiAddress remote)
 #pragma warning restore VSTHRD100 // Avoid async void methods
         {
             if (!IsRunning)

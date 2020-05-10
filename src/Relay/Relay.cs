@@ -22,7 +22,7 @@ namespace PeerTalk.Relay
     /// </summary>
     public class Relay : IPeerProtocol, IPeerTransport
     {
-        private Action<Stream, MultiAddress, MultiAddress> handler;
+        private Func<Stream, MultiAddress, MultiAddress, Task> handler;
 
         /// <inheritdoc />
         public string Name => "/libp2p/circuit/relay";
@@ -121,7 +121,7 @@ namespace PeerTalk.Relay
         }
 
         /// <inheritdoc />
-        public MultiAddress Listen(MultiAddress address, Action<Stream, MultiAddress, MultiAddress> handler, CancellationToken cancel)
+        public MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
             this.Swarm.AddProtocol(this);
             this.handler = handler;
@@ -266,7 +266,7 @@ namespace PeerTalk.Relay
             }
 
             await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
-            this.handler(srcStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
+            await this.handler(srcStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
         }
 
         private Task HandleStatusAsync(CircuitRelayMessage request)
