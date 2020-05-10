@@ -1,24 +1,32 @@
-﻿using System.IO;
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Ipfs;
+using Makaretu.Dns.Resolving;
+using PeerTalk.Protocols;
+using PeerTalk.Transports;
 using ProtoBuf;
 using Semver;
 
-namespace PeerTalk.Protocols
+namespace PeerTalk.Relay
 {
+
     /// <summary>
     /// Protocol for handling relay requests
     ///
     /// See https://github.com/libp2p/specs/blob/master/relay/README.md
     /// </summary>
-    public class Relay : IPeerProtocol
+    public class Relay : IPeerProtocol, IPeerTransport
     {
+        private Action<Stream, MultiAddress, MultiAddress> handler;
+
         /// <inheritdoc />
         public string Name => "/libp2p/circuit/relay";
-
-
+        
         /// <inheritdoc />
         public SemVersion Version => new SemVersion(0, 1);
         
@@ -31,11 +39,94 @@ namespace PeerTalk.Protocols
         ///   Provides access to other peers.
         /// </summary>
         public Swarm Swarm { get; set; }
+
+        /// <summary>
+        /// A list of the known
+        /// </summary>
+        public RelayCollection KnownRelays { get; set; }
         
         /// <inheritdoc />
         public override string ToString()
         {
             return $"{Name}/{Version}";
+        }
+
+        /// <inheritdoc />
+        public async Task<Stream> ConnectAsync(MultiAddress address, CancellationToken cancel = default(CancellationToken))
+        {
+            if (!address.HasPeerId)
+            {
+                throw new InvalidDataException("The address must contain the destination peer id");
+            }
+
+            if (!address.Protocols.Any(np => np.Code == 290))
+            {
+                throw new InvalidDataException("The address is not a p2p-circuit address");
+            }
+
+            var circuitAddress = address.ToP2PCircuitMultiAddress();
+            if (circuitAddress.RelayAddress != null)
+            {
+                var relayConnection = await this.Swarm.ConnectAsync(circuitAddress.RelayAddress, cancel);
+                var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
+                if (stream != null)
+                {
+                    return stream;
+                }
+            }
+
+            foreach (var relayHash in this.KnownRelays.RelayHashes)
+            {
+                var relayConnection = await this.Swarm.ConnectAsync(relayHash, cancel);
+                var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
+                if (stream != null)
+                {
+                    return stream;
+                }
+            }
+
+            return null;
+        }
+
+        private async Task<Stream> HopAsync(PeerConnection relayConnection, MultiAddress destinationAddress,
+            CancellationToken cancel)
+        {
+            var relayStream = await this.Swarm.DialAsync(relayConnection.RemotePeer, this.ToString(), cancel);
+            
+            // send the hop
+            await SendRelayMessageAsync(new CircuitRelayMessage
+            {
+                Type = Type.HOP,
+                SrcPeer = new RelayPeerMessage
+                {
+                    Id = this.Swarm.LocalPeer.Id.ToArray(),
+                    Addresses = this.Swarm.LocalPeer.Addresses.Select(a => a.ToArray()).ToArray()
+                },
+                DstPeer = new RelayPeerMessage
+                {
+                    Id = destinationAddress.PeerId.ToArray(),
+                    Addresses = new [] { destinationAddress.ToArray() }
+                }
+            }, relayStream, cancel);
+            await relayStream.FlushAsync(cancel);
+
+            var response = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(relayStream, cancel).ConfigureAwait(false);
+            if (response.IsSuccess())
+            {
+                return relayStream;
+            }
+
+            // TODO handle various responses (if they can't hop should be ignore the relay for a while etc)
+            // (read the specs and handle all appropriately)
+            return null;
+        }
+
+        /// <inheritdoc />
+        public MultiAddress Listen(MultiAddress address, Action<Stream, MultiAddress, MultiAddress> handler, CancellationToken cancel)
+        {
+            this.Swarm.AddProtocol(this);
+            this.handler = handler;
+            return address;
         }
 
         /// <inheritdoc />
@@ -139,6 +230,25 @@ namespace PeerTalk.Protocols
             if (stopResponse.IsSuccess())
             {
                 await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
+                var srcToDestTask = srcStream.CopyToAsync(dstStream, 1024, cancel);
+                var dstToSrcTask = dstStream.CopyToAsync(srcStream, 1024, cancel);
+                while (true)
+                {
+                    await Task.WhenAny(srcToDestTask, dstToSrcTask);
+                    if (srcToDestTask.IsCompleted)
+                    {
+                        srcToDestTask = srcStream.CopyToAsync(dstStream, 1024, cancel);
+                    }
+                    else
+                    {
+                        dstToSrcTask = dstStream.CopyToAsync(srcStream, 1024, cancel);
+                    }
+
+                    if (cancel.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                }
             }
         }
 
@@ -157,7 +267,7 @@ namespace PeerTalk.Protocols
             }
 
             await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
-            await Swarm.ConnectRemoteAsync(srcStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
+            this.handler(srcStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
         }
 
         private Task HandleStatusAsync(CircuitRelayMessage request)

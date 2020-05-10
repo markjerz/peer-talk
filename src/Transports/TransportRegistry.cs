@@ -6,23 +6,23 @@ using System.Threading.Tasks;
 
 namespace PeerTalk.Transports
 {
-    static class TransportRegistry
+    class TransportRegistry
     {
-        public static Dictionary<string, Func<IPeerTransport>> Transports;
+        public Dictionary<string, Func<IPeerTransport>> Transports;
 
-        static TransportRegistry()
+        public TransportRegistry()
         {
             Transports = new Dictionary<string, Func<IPeerTransport>>();
             Register("tcp", () => new Tcp());
             Register("udp", () => new Udp());
         }
 
-        public static void Register(string protocolName, Func<IPeerTransport> transport)
+        public void Register(string protocolName, Func<IPeerTransport> transport)
         {
             Transports.Add(protocolName, transport);
         }
 
-        public static void Deregister(string protocolName)
+        public void Deregister(string protocolName)
         {
             Transports.Remove(protocolName);
         }
