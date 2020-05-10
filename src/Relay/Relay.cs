@@ -334,15 +334,12 @@ namespace PeerTalk.Relay
                 };
                 if (Addresses != null)
                 {
-                    var x = new MultiAddress($"/ipfs/{id}");
                     peer.Addresses = Addresses
                         .Select(bytes =>
                         {
                             try
                             {
-                                var ma = new MultiAddress(bytes);
-                                ma.Protocols.AddRange(x.Protocols);
-                                return ma;
+                                return new MultiAddress(bytes);
                             }
                             catch
                             {
