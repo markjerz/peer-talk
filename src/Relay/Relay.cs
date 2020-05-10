@@ -108,7 +108,6 @@ namespace PeerTalk.Relay
                     Addresses = new [] { destinationAddress.ToArray() }
                 }
             }, relayStream, cancel);
-            await relayStream.FlushAsync(cancel);
 
             var response = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(relayStream, cancel).ConfigureAwait(false);
             if (response.IsSuccess())
