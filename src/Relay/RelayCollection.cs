@@ -15,9 +15,9 @@ namespace PeerTalk.Relay
         private readonly ConcurrentSet<MultiAddress> relayAddresses = new ConcurrentSet<MultiAddress>();
 
         /// <summary>
-        /// Get the list of known relay hashes
+        /// Get the list of known relay addresses
         /// </summary>
-        public IEnumerable<MultiAddress> RelayHashes => new ReadOnlyCollection<MultiAddress>(relayAddresses.ToList());
+        public IEnumerable<MultiAddress> RelayAddresses => new ReadOnlyCollection<MultiAddress>(relayAddresses.ToList());
 
         /// <summary>
         /// Add a new address to the relay collection

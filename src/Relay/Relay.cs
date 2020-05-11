@@ -75,9 +75,9 @@ namespace PeerTalk.Relay
                 }
             }
 
-            foreach (var relayHash in this.KnownRelays.RelayHashes)
+            foreach (var relayAddress in this.KnownRelays.RelayAddresses)
             {
-                var relayConnection = await this.Swarm.ConnectAsync(relayHash, cancel);
+                var relayConnection = await this.Swarm.ConnectAsync(relayAddress, cancel);
                 var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
                 if (stream != null)
                 {

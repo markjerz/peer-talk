@@ -75,7 +75,7 @@ namespace PeerTalk.Relay
             await swarmB.StartListeningAsync("/ip4/0.0.0.0/tcp/4001");
             //await swarmA.StartListeningAsync("/p2p-circuit");
             await swarmB.StartListeningAsync("/p2p-circuit");
-            var bRelayConn = await swarmB.ConnectAsync(RelayCollection.Default.RelayHashes.First());
+            var bRelayConn = await swarmB.ConnectAsync(RelayCollection.Default.RelayAddresses.First());
 
             var connectionToBThroughRelay = await swarmA.ConnectAsync(new MultiAddress($"/p2p-circuit/p2p/{peerB.Id}"));
             Assert.IsNotNull(connectionToBThroughRelay);
