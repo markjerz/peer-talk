@@ -32,6 +32,11 @@ namespace PeerTalk.Relay
                 DestinationAddress = new MultiAddress(destinationAddress)
             };
         }
+
+        public static bool IsP2PCircuitAddress(this MultiAddress address)
+        {
+            return address.Protocols.Any(p => p.Code == 290);
+        }
     }
 
     class P2PCircuitMultiAddress

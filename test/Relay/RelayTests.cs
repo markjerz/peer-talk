@@ -10,6 +10,7 @@ using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Security;
 using Org.BouncyCastle.X509;
 using PeerTalk.Cryptography;
+using PeerTalk.Protocols;
 using ProtoBuf;
 
 namespace PeerTalk.Relay
@@ -57,6 +58,11 @@ namespace PeerTalk.Relay
             swarmA.EnableRelay();
             swarmB.EnableRelay();
 
+            var pingA = new Ping1 {Swarm = swarmA};
+            await pingA.StartAsync();
+            var pingB = new Ping1() {Swarm = swarmB};
+            await pingB.StartAsync();
+
             // for debugging
             swarmA.TransportConnectionTimeout = TimeSpan.FromHours(1);
             swarmB.TransportConnectionTimeout = TimeSpan.FromHours(1);
@@ -67,11 +73,15 @@ namespace PeerTalk.Relay
             // connect b to relay
             await swarmA.StartListeningAsync("/ip4/0.0.0.0/tcp/4002");
             await swarmB.StartListeningAsync("/ip4/0.0.0.0/tcp/4001");
+            //await swarmA.StartListeningAsync("/p2p-circuit");
             await swarmB.StartListeningAsync("/p2p-circuit");
             var bRelayConn = await swarmB.ConnectAsync(RelayCollection.Default.RelayHashes.First());
 
             var connectionToBThroughRelay = await swarmA.ConnectAsync(new MultiAddress($"/p2p-circuit/p2p/{peerB.Id}"));
             Assert.IsNotNull(connectionToBThroughRelay);
+
+            var response = await pingA.PingAsync(peerB.Id);
+            Assert.IsTrue(response.All(p => p.Success));
         }
 
         string CreatePublicKey(AsymmetricCipherKeyPair key)

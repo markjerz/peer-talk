@@ -59,7 +59,7 @@ namespace PeerTalk.Relay
                 throw new InvalidDataException("The address must contain the destination peer id");
             }
 
-            if (!address.Protocols.Any(np => np.Code == 290))
+            if (!address.IsP2PCircuitAddress())
             {
                 throw new InvalidDataException("The address is not a p2p-circuit address");
             }
@@ -132,32 +132,29 @@ namespace PeerTalk.Relay
         public async Task ProcessMessageAsync(PeerConnection connection, Stream stream,
             CancellationToken cancel = default(CancellationToken))
         {
-            while (true)
+            var request = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(stream, cancel).ConfigureAwait(false);
+            switch (request.Type)
             {
-                var request = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(stream, cancel).ConfigureAwait(false);
-                switch (request.Type)
-                {
-                    case Type.CAN_HOP:
-                         await HandleCanHopAsync(request, connection, stream, cancel);
-                        break;
+                case Type.CAN_HOP:
+                     await HandleCanHopAsync(request, connection, stream, cancel);
+                    break;
 
-                    case Type.HOP:
-                         await HandleHopAsync(request, connection, stream, cancel);
-                        break;
+                case Type.HOP:
+                     await HandleHopAsync(request, connection, stream, cancel);
+                    break;
 
-                    case Type.STOP:
-                         await HandleStopAsync(request, stream, cancel);
-                        break;
+                case Type.STOP:
+                     await HandleStopAsync(request, stream, cancel);
+                    break;
 
-                    case Type.STATUS:
-                         await HandleStatusAsync(request);
-                        break;
+                case Type.STATUS:
+                     await HandleStatusAsync(request);
+                    break;
 
-                    default:
-                        await SendRelayMessageAsync(
-                            CircuitRelayMessage.NewStatusResponse(Status.MALFORMED_MESSAGE), stream, cancel);
-                        break;
-                }
+                default:
+                    await SendRelayMessageAsync(
+                        CircuitRelayMessage.NewStatusResponse(Status.MALFORMED_MESSAGE), stream, cancel);
+                    break;
             }
         }
 
@@ -222,8 +219,7 @@ namespace PeerTalk.Relay
                 SrcPeer = request.SrcPeer,
                 DstPeer = request.DstPeer
             };
-            ProtoBuf.Serializer.SerializeWithLengthPrefix(dstStream, stopRequest, PrefixStyle.Base128);
-            await dstStream.FlushAsync(cancel).ConfigureAwait(false);
+            await SendRelayMessageAsync(stopRequest, dstStream, cancel);
 
             var stopResponse = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(dstStream, cancel).ConfigureAwait(false);
             if (stopResponse.IsSuccess())

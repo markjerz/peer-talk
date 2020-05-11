@@ -592,6 +592,7 @@ namespace PeerTalk
             // Get the addresses we can use to dial the remote.  Filter
             // out any addresses (ip and port) we are listening on.
             var blackList = listeners.Keys
+                .Where(a => !a.IsP2PCircuitAddress())
                 .Select(a => a.WithoutPeerId())
                 .ToArray();
             var possibleAddresses = (await Task.WhenAll(addrs.Select(a => a.ResolveAsync(cancel))).ConfigureAwait(false))
@@ -663,7 +664,7 @@ namespace PeerTalk
         {
             // TODO: HACK: Currenty only the ipfs/p2p is supported.
             // short circuit to make life faster.
-            if (addr.Protocols.All(p => p.Code != 290)
+            if (!addr.IsP2PCircuitAddress()
                 && (addr.Protocols.Count != 3
                 || !(addr.Protocols[2].Name == "ipfs" || addr.Protocols[2].Name == "p2p")))
             {
