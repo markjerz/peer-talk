@@ -225,18 +225,18 @@ namespace PeerTalk.Relay
             if (stopResponse.IsSuccess())
             {
                 await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
-                var srcToDestTask = srcStream.CopyToAsync(dstStream, 1024, cancel);
-                var dstToSrcTask = dstStream.CopyToAsync(srcStream, 1024, cancel);
+                var srcToDestTask = Pipe(srcStream, dstStream);
+                var dstToSrcTask = Pipe(dstStream, srcStream);
                 while (true)
                 {
                     await Task.WhenAny(srcToDestTask, dstToSrcTask);
                     if (srcToDestTask.IsCompleted)
                     {
-                        srcToDestTask = srcStream.CopyToAsync(dstStream, 1024, cancel);
+                        srcToDestTask = Pipe(srcStream, dstStream);
                     }
                     else
                     {
-                        dstToSrcTask = dstStream.CopyToAsync(srcStream, 1024, cancel);
+                        dstToSrcTask = Pipe(dstStream, srcStream);
                     }
 
                     if (cancel.IsCancellationRequested)
@@ -244,6 +244,13 @@ namespace PeerTalk.Relay
                         break;
                     }
                 }
+            }
+
+            async Task Pipe(Stream inStream, Stream outStream)
+            {
+                var buffer = new byte[1024];
+                var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
+                await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
             }
         }
 

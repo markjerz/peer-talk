@@ -32,6 +32,7 @@ namespace PeerTalk.Relay
 
             var keyA = GetKey();
             var keyB = GetKey();
+            var relayKey = GetKey();
 
             Peer peerA = new Peer
             {
@@ -45,6 +46,13 @@ namespace PeerTalk.Relay
                 Id = CreateKeyId(keyB.Public),
                 PublicKey = CreatePublicKey(keyB)
             };
+            Peer relay = new Peer
+            {
+                AgentVersion = "R",
+                Id = CreateKeyId(relayKey.Public),
+                PublicKey = CreatePublicKey(relayKey)
+            };
+
             var swarmA = new Swarm()
             {
                 LocalPeer = peerA,
@@ -55,8 +63,11 @@ namespace PeerTalk.Relay
                 LocalPeer = peerB,
                 LocalPeerKey = Key.CreatePrivateKey(keyB.Private)
             };
-            swarmA.EnableRelay();
-            swarmB.EnableRelay();
+            var relaySwarm = new Swarm()
+            {
+                LocalPeer = relay,
+                LocalPeerKey = Key.CreatePrivateKey(relayKey.Private)
+            };
 
             var pingA = new Ping1 {Swarm = swarmA};
             await pingA.StartAsync();
@@ -66,16 +77,27 @@ namespace PeerTalk.Relay
             // for debugging
             swarmA.TransportConnectionTimeout = TimeSpan.FromHours(1);
             swarmB.TransportConnectionTimeout = TimeSpan.FromHours(1);
+            relaySwarm.TransportConnectionTimeout = TimeSpan.FromHours(1);
 
             await swarmA.StartAsync();
             await swarmB.StartAsync();
+            await relaySwarm.StartAsync();
 
             // connect b to relay
             await swarmA.StartListeningAsync("/ip4/0.0.0.0/tcp/4002");
             await swarmB.StartListeningAsync("/ip4/0.0.0.0/tcp/4001");
+            await relaySwarm.StartListeningAsync("/ip4/0.0.0.0/tcp/4003");
+
+            var relayCollection = new RelayCollection();
+            relayCollection.Add(relay.Addresses.First(a => a.Protocols.Any(p => p.Name == "tcp")));
+            swarmA.EnableRelay(relayCollection);
+            swarmB.EnableRelay(relayCollection);
+            relaySwarm.EnableRelay(relayCollection, hop: true);
             //await swarmA.StartListeningAsync("/p2p-circuit");
             await swarmB.StartListeningAsync("/p2p-circuit");
-            var bRelayConn = await swarmB.ConnectAsync(RelayCollection.Default.RelayAddresses.First());
+            await relaySwarm.StartListeningAsync("/p2p-circuit");
+
+            var bRelayConn = await swarmB.ConnectAsync(relayCollection.RelayAddresses.First());
 
             var connectionToBThroughRelay = await swarmA.ConnectAsync(new MultiAddress($"/p2p-circuit/p2p/{peerB.Id}"));
             Assert.IsNotNull(connectionToBThroughRelay);
