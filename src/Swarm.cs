@@ -22,7 +22,7 @@ namespace PeerTalk
     /// <summary>
     ///   Manages communication with other peers.
     /// </summary>
-    public class Swarm : IService, IPolicy<MultiAddress>, IPolicy<Peer>
+    public class Swarm : IService, IPolicy<MultiAddress>, IPolicy<Peer>, IDialer
     {
         static ILog log = LogManager.GetLogger(typeof(Swarm));
 
@@ -982,11 +982,30 @@ namespace PeerTalk
         {
             var relay = new Relay.Relay()
             {
-                Swarm = this,
+                Dialer = this,
                 Hop = hop,
                 KnownRelays = relayCollection ?? RelayCollection.Default
             };
             this.transportRegistry.Register("p2p-circuit", () => relay);
+        }
+
+        /// <summary>
+        /// Adds a new transport provider to the Swarm
+        /// </summary>
+        /// <param name="protocolName"></param>
+        /// <param name="transport"></param>
+        public void RegisterTransport(string protocolName, Func<IPeerTransport> transport)
+        {
+            this.transportRegistry.Register(protocolName, transport);
+        }
+
+        /// <summary>
+        /// Removes a transport provider from the swarm
+        /// </summary>
+        /// <param name="protocolName"></param>
+        public void DeregisterTransport(string protocolName)
+        {
+            this.transportRegistry.Deregister(protocolName);
         }
 
         /// <summary>

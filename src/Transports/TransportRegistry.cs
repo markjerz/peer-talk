@@ -19,6 +19,11 @@ namespace PeerTalk.Transports
 
         public void Register(string protocolName, Func<IPeerTransport> transport)
         {
+            if (Transports.ContainsKey(protocolName))
+            {
+                throw new ArgumentException($"A protocol is already registered for {protocolName}");
+            }
+
             Transports.Add(protocolName, transport);
         }
 

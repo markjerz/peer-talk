@@ -38,13 +38,18 @@ namespace PeerTalk.Relay
         /// <summary>
         ///   Provides access to other peers.
         /// </summary>
-        public Swarm Swarm { get; set; }
+        public IDialer Dialer { get; set; }
+
+        /// <summary>
+        /// The local peer
+        /// </summary>
+        public Peer LocalPeer { get; set; }
 
         /// <summary>
         /// A list of the known
         /// </summary>
         public RelayCollection KnownRelays { get; set; }
-        
+
         /// <inheritdoc />
         public override string ToString()
         {
@@ -67,7 +72,7 @@ namespace PeerTalk.Relay
             var circuitAddress = address.ToP2PCircuitMultiAddress();
             if (circuitAddress.RelayAddress != null)
             {
-                var relayConnection = await this.Swarm.ConnectAsync(circuitAddress.RelayAddress, cancel);
+                var relayConnection = await this.Dialer.ConnectAsync(circuitAddress.RelayAddress, cancel);
                 var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
                 if (stream != null)
                 {
@@ -77,7 +82,7 @@ namespace PeerTalk.Relay
 
             foreach (var relayAddress in this.KnownRelays.RelayAddresses)
             {
-                var relayConnection = await this.Swarm.ConnectAsync(relayAddress, cancel);
+                var relayConnection = await this.Dialer.ConnectAsync(relayAddress, cancel);
                 var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
                 if (stream != null)
                 {
@@ -91,7 +96,7 @@ namespace PeerTalk.Relay
         private async Task<Stream> HopAsync(PeerConnection relayConnection, MultiAddress destinationAddress,
             CancellationToken cancel)
         {
-            var relayStream = await this.Swarm.DialAsync(relayConnection.RemotePeer, this.ToString(), cancel);
+            var relayStream = await this.Dialer.DialAsync(relayConnection.RemotePeer, this.ToString(), cancel);
             
             // send the hop
             await SendRelayMessageAsync(new CircuitRelayMessage
@@ -99,8 +104,8 @@ namespace PeerTalk.Relay
                 Type = Type.HOP,
                 SrcPeer = new RelayPeerMessage
                 {
-                    Id = this.Swarm.LocalPeer.Id.ToArray(),
-                    Addresses = this.Swarm.LocalPeer.Addresses.Select(a => a.ToArray()).ToArray()
+                    Id = this.LocalPeer.Id.ToArray(),
+                    Addresses = this.LocalPeer.Addresses.Select(a => a.ToArray()).ToArray()
                 },
                 DstPeer = new RelayPeerMessage
                 {
@@ -123,7 +128,7 @@ namespace PeerTalk.Relay
         /// <inheritdoc />
         public MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
-            this.Swarm.AddProtocol(this);
+            //this.Swarm.AddProtocol(this);
             this.handler = handler;
             return address;
         }
@@ -212,7 +217,7 @@ namespace PeerTalk.Relay
             }
 
             // TODO prevent active relay through option
-            var dstStream = await Swarm.DialAsync(dstPeer, this.ToString(), cancel);
+            var dstStream = await this.Dialer.DialAsync(dstPeer, this.ToString(), cancel);
             var stopRequest = new CircuitRelayMessage
             {
                 Type = Type.STOP,
@@ -225,32 +230,26 @@ namespace PeerTalk.Relay
             if (stopResponse.IsSuccess())
             {
                 await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
-                var srcToDestTask = Pipe(srcStream, dstStream);
-                var dstToSrcTask = Pipe(dstStream, srcStream);
-                while (true)
-                {
-                    await Task.WhenAny(srcToDestTask, dstToSrcTask);
-                    if (srcToDestTask.IsCompleted)
-                    {
-                        srcToDestTask = Pipe(srcStream, dstStream);
-                    }
-                    else
-                    {
-                        dstToSrcTask = Pipe(dstStream, srcStream);
-                    }
-
-                    if (cancel.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                }
+                var srcToDst = Task.Run(() => Pipe(srcStream, dstStream));
+                var dstToSrc = Task.Run(() => Pipe(dstStream, srcStream));
             }
 
             async Task Pipe(Stream inStream, Stream outStream)
             {
-                var buffer = new byte[1024];
-                var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
-                await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
+                try
+                {
+                    while (true)
+                    {
+                        var buffer = new byte[1024];
+                        var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
+                        await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
+                        await outStream.FlushAsync(cancel);
+                    }
+                }
+                catch
+                {
+                    throw;
+                }
             }
         }
 
