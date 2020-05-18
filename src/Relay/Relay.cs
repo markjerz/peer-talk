@@ -39,12 +39,7 @@ namespace PeerTalk.Relay
         ///   Provides access to other peers.
         /// </summary>
         public IDialer Dialer { get; set; }
-
-        /// <summary>
-        /// The local peer
-        /// </summary>
-        public Peer LocalPeer { get; set; }
-
+        
         /// <summary>
         /// A list of the known
         /// </summary>
@@ -104,8 +99,8 @@ namespace PeerTalk.Relay
                 Type = Type.HOP,
                 SrcPeer = new RelayPeerMessage
                 {
-                    Id = this.LocalPeer.Id.ToArray(),
-                    Addresses = this.LocalPeer.Addresses.Select(a => a.ToArray()).ToArray()
+                    Id = this.Dialer.LocalPeer.Id.ToArray(),
+                    Addresses = this.Dialer.LocalPeer.Addresses.Select(a => a.ToArray()).ToArray()
                 },
                 DstPeer = new RelayPeerMessage
                 {
@@ -128,7 +123,7 @@ namespace PeerTalk.Relay
         /// <inheritdoc />
         public MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
-            //this.Swarm.AddProtocol(this);
+            this.Dialer.AddProtocol(this);
             this.handler = handler;
             return address;
         }

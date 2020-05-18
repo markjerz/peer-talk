@@ -19,38 +19,58 @@ using PeerTalk.Cryptography;
 using PeerTalk.Protocols;
 using PeerTalk.Transports;
 using ProtoBuf;
+using Serilog;
 
 namespace PeerTalk.Relay
 {
     [TestClass]
     public class RelayTests
     {
+        [AssemblyInitialize]
+        public static void AssemblyInitialize(TestContext context)
+        {
+            var log = new LoggerConfiguration()
+                .WriteTo.File(
+                    @"C:\repos\peer-talk\log.txt", 
+                    flushToDiskInterval: TimeSpan.FromSeconds(1),
+                    rollingInterval: RollingInterval.Day)
+                .MinimumLevel.Verbose()
+                .CreateLogger();
+
+            // set global instance of Serilog logger which Common.Logger.Serilog requires.
+            Log.Logger = log;
+        }
+
         [TestMethod]
         public async Task JustTestRelay()
         {
-            var mockLocalDialer = new MockDialer();
             var localPeer = new Peer
             {
                 Id = "QmdpwjdB94eNm2Lcvp9JqoCxswo3AKQqjLuNZyLixmCM1h",
                 Addresses = new MultiAddress[]
                     {"/ip4/0.0.0.0/tcp/4001/p2p/QmdpwjdB94eNm2Lcvp9JqoCxswo3AKQqjLuNZyLixmCM1h"}
             };
-            var localPeerRelay = new Relay()
+            var mockLocalDialer = new MockDialer
             {
-                Dialer = mockLocalDialer,
                 LocalPeer = localPeer
             };
+            var localPeerRelay = new Relay()
+            {
+                Dialer = mockLocalDialer
+            };
 
-            var mockRelayDialer = new MockDialer();
             var relayPeer = new Peer
             {
                 Id = "QmXK9VBxaXFuuT29AaPUTgW3jBWZ9JgLVZYdMYTHC6LLAH",
                 Addresses = new MultiAddress[]
                     {"/ip4/0.0.0.0/tcp/4002/p2p/QmXK9VBxaXFuuT29AaPUTgW3jBWZ9JgLVZYdMYTHC6LLAH"}
             };
+            var mockRelayDialer = new MockDialer
+            {
+                LocalPeer = relayPeer
+            };
             var hopRelay = new Relay()
             {
-                LocalPeer = relayPeer,
                 Hop = true,
                 Dialer = mockRelayDialer
             };
@@ -61,9 +81,13 @@ namespace PeerTalk.Relay
                 Addresses = new MultiAddress[]
                     {"/ip4/0.0.0.0/tcp/4003/p2p/QmbFgm5zan8P6eWWmeyfncR5feYEMPbht5b1FW1C37aQ7y"}
             };
-            var remotePeerRelay = new Relay
+            var remoteDialer = new MockDialer
             {
                 LocalPeer = remotePeer
+            };
+            var remotePeerRelay = new Relay
+            {
+                Dialer = remoteDialer
             };
 
             var localToRelayConnection = FullDuplexStream.CreatePair();
@@ -186,6 +210,13 @@ namespace PeerTalk.Relay
 
                 throw new ArgumentException();
             }
+
+            public void AddProtocol(IPeerProtocol protocol)
+            {
+                
+            }
+
+            public Peer LocalPeer { get; set; }
         }
 
 

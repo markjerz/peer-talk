@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Ipfs;
+using PeerTalk.Protocols;
 
 namespace PeerTalk
 {
@@ -72,5 +73,22 @@ namespace PeerTalk
         ///   </para>
         /// </remarks>
         Task<Stream> DialAsync(Peer peer, string protocol, CancellationToken cancel = default(CancellationToken));
+
+        /// <summary>
+        ///   Add a protocol that is supported by the swarm.
+        /// </summary>
+        /// <param name="protocol">
+        ///   The protocol to add.
+        /// </param>
+        void AddProtocol(IPeerProtocol protocol);
+
+        /// <summary>
+        ///  The local peer.
+        /// </summary>
+        /// <value>
+        ///   The local peer must have an <see cref="Peer.Id"/> and
+        ///   <see cref="Peer.PublicKey"/>.
+        /// </value>
+        Peer LocalPeer { get; set; }
     }
 }
