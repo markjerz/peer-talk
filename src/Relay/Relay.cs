@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Common.Logging;
 using Ipfs;
 using Makaretu.Dns.Resolving;
 using PeerTalk.Protocols;
@@ -22,6 +23,8 @@ namespace PeerTalk.Relay
     /// </summary>
     public class Relay : IPeerProtocol, IPeerTransport
     {
+        static ILog log = LogManager.GetLogger(typeof(Relay));
+
         private Func<Stream, MultiAddress, MultiAddress, Task> handler;
 
         /// <inheritdoc />
@@ -54,6 +57,7 @@ namespace PeerTalk.Relay
         /// <inheritdoc />
         public async Task<Stream> ConnectAsync(MultiAddress address, CancellationToken cancel = default(CancellationToken))
         {
+            log.Trace($"Connecting to {address} via relay");
             if (!address.HasPeerId)
             {
                 throw new InvalidDataException("The address must contain the destination peer id");
@@ -67,10 +71,13 @@ namespace PeerTalk.Relay
             var circuitAddress = address.ToP2PCircuitMultiAddress();
             if (circuitAddress.RelayAddress != null)
             {
+                log.Trace($"Relay specified {circuitAddress.RelayAddress}");
                 var relayConnection = await this.Dialer.ConnectAsync(circuitAddress.RelayAddress, cancel);
+                log.Trace($"Connected to relay");
                 var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
                 if (stream != null)
                 {
+                    log.Trace($"Hop successful");
                     return stream;
                 }
             }
@@ -78,9 +85,11 @@ namespace PeerTalk.Relay
             foreach (var relayAddress in this.KnownRelays.RelayAddresses)
             {
                 var relayConnection = await this.Dialer.ConnectAsync(relayAddress, cancel);
+                log.Trace($"Connected to relay");
                 var stream = await this.HopAsync(relayConnection, circuitAddress.DestinationAddress, cancel);
                 if (stream != null)
                 {
+                    log.Trace($"Hop successful");
                     return stream;
                 }
             }
@@ -92,8 +101,9 @@ namespace PeerTalk.Relay
             CancellationToken cancel)
         {
             var relayStream = await this.Dialer.DialAsync(relayConnection.RemotePeer, this.ToString(), cancel);
-            
+
             // send the hop
+            log.Trace($"Send hop request to relay");
             await SendRelayMessageAsync(new CircuitRelayMessage
             {
                 Type = Type.HOP,
@@ -112,6 +122,7 @@ namespace PeerTalk.Relay
             var response = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(relayStream, cancel).ConfigureAwait(false);
             if (response.IsSuccess())
             {
+                log.Trace($"Received success from hop");
                 return relayStream;
             }
 
@@ -123,6 +134,7 @@ namespace PeerTalk.Relay
         /// <inheritdoc />
         public MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
+            log.Trace($"Start listening on relay protocol");
             this.Dialer.AddProtocol(this);
             this.handler = handler;
             return address;
@@ -133,6 +145,7 @@ namespace PeerTalk.Relay
             CancellationToken cancel = default(CancellationToken))
         {
             var request = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(stream, cancel).ConfigureAwait(false);
+            log.Trace($"Processing relay message");
             switch (request.Type)
             {
                 case Type.CAN_HOP:
@@ -167,6 +180,7 @@ namespace PeerTalk.Relay
         private async Task HandleCanHopAsync(CircuitRelayMessage request, PeerConnection connection, Stream stream,
             CancellationToken cancel)
         {
+            log.Trace($"Processing CAN_HOP");
             var response = this.Hop 
                 ? CircuitRelayMessage.NewStatusResponse(Status.SUCCESS) 
                 : CircuitRelayMessage.NewStatusResponse(Status.HOP_CANT_SPEAK_RELAY);
@@ -212,7 +226,9 @@ namespace PeerTalk.Relay
             }
 
             // TODO prevent active relay through option
+            log.Trace($"Dial destination {dstPeer.Id} over relay");
             var dstStream = await this.Dialer.DialAsync(dstPeer, this.ToString(), cancel);
+            log.Trace($"Send STOP request to destination");
             var stopRequest = new CircuitRelayMessage
             {
                 Type = Type.STOP,
@@ -224,7 +240,9 @@ namespace PeerTalk.Relay
             var stopResponse = await ProtoBufHelper.ReadMessageAsync<CircuitRelayMessage>(dstStream, cancel).ConfigureAwait(false);
             if (stopResponse.IsSuccess())
             {
+                log.Trace($"Received success from STOP request");
                 await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
+                log.Trace($"Piping the streams together");
                 var srcToDst = Task.Run(() => Pipe(srcStream, dstStream));
                 var dstToSrc = Task.Run(() => Pipe(dstStream, srcStream));
             }
@@ -237,6 +255,7 @@ namespace PeerTalk.Relay
                     {
                         var buffer = new byte[1024];
                         var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
+                        log.Trace($"Received message from peer");
                         await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
                         await outStream.FlushAsync(cancel);
                     }
@@ -262,7 +281,9 @@ namespace PeerTalk.Relay
                 return;
             }
 
+            log.Trace($"Received STOP request from {srcPeer.Id}");
             await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
+            log.Trace("Initiating relay connection");
             await this.handler(srcStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
         }
 

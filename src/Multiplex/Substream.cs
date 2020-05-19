@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
+using Common.Logging;
 
 namespace PeerTalk.Multiplex
 {
@@ -23,12 +24,14 @@ namespace PeerTalk.Multiplex
     /// </remarks>
     public class Substream : Stream
     {
+        static ILog log = LogManager.GetLogger(typeof(Substream));
+
         BufferBlock<byte[]> inBlocks = new BufferBlock<byte[]>();
         byte[] inBlock;
         int inBlockOffset;
         bool eos;
 
-        Stream outStream = new MemoryStream();
+        MemoryStream outStream = new MemoryStream();
 
         /// <summary>
         ///   The type of message of sent to the other side.
@@ -181,11 +184,17 @@ namespace PeerTalk.Multiplex
             using (await Muxer.AcquireWriteAccessAsync().ConfigureAwait(false))
             {
                 outStream.Position = 0;
+                
                 var header = new Header
                 {
                     StreamId = Id,
                     PacketType = SentMessageType
                 };
+
+                log.Trace($"Sending {Id}: {SentMessageType}");
+                log.Trace($"Content: {Encoding.UTF8.GetString(outStream.ToArray())}");
+                outStream.Position = 0;
+
                 await header.WriteAsync(Muxer.Channel, cancel).ConfigureAwait(false);
                 await Varint.WriteVarintAsync(Muxer.Channel, outStream.Length, cancel).ConfigureAwait(false);
                 await outStream.CopyToAsync(Muxer.Channel).ConfigureAwait(false);

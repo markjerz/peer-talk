@@ -17,9 +17,11 @@ using Org.BouncyCastle.Security;
 using Org.BouncyCastle.X509;
 using PeerTalk.Cryptography;
 using PeerTalk.Protocols;
+using PeerTalk.SecureCommunication;
 using PeerTalk.Transports;
 using ProtoBuf;
 using Serilog;
+using Serilog.Formatting.Compact;
 
 namespace PeerTalk.Relay
 {
@@ -30,11 +32,12 @@ namespace PeerTalk.Relay
         public static void AssemblyInitialize(TestContext context)
         {
             var log = new LoggerConfiguration()
-                .WriteTo.File(
-                    @"C:\repos\peer-talk\log.txt", 
+                .WriteTo.File(new CompactJsonFormatter(),
+                    @"F:\projects\peer-talk\log.txt",
                     flushToDiskInterval: TimeSpan.FromSeconds(1),
                     rollingInterval: RollingInterval.Day)
                 .MinimumLevel.Verbose()
+                .Enrich.WithThreadId()
                 .CreateLogger();
 
             // set global instance of Serilog logger which Common.Logger.Serilog requires.
@@ -44,11 +47,14 @@ namespace PeerTalk.Relay
         [TestMethod]
         public async Task JustTestRelay()
         {
+            var localKey = CryptoHelpers.GetKey();
+            var localId = localKey.Public.CreateKeyId();
             var localPeer = new Peer
             {
-                Id = "QmdpwjdB94eNm2Lcvp9JqoCxswo3AKQqjLuNZyLixmCM1h",
+                Id = localId,
+                PublicKey = localKey.CreatePublicKey(),
                 Addresses = new MultiAddress[]
-                    {"/ip4/0.0.0.0/tcp/4001/p2p/QmdpwjdB94eNm2Lcvp9JqoCxswo3AKQqjLuNZyLixmCM1h"}
+                    {$"/ip4/0.0.0.0/tcp/4001/p2p/{localId}"}
             };
             var mockLocalDialer = new MockDialer
             {
@@ -59,11 +65,14 @@ namespace PeerTalk.Relay
                 Dialer = mockLocalDialer
             };
 
+            var relayKey = CryptoHelpers.GetKey();
+            var relayId = relayKey.Public.CreateKeyId();
             var relayPeer = new Peer
             {
-                Id = "QmXK9VBxaXFuuT29AaPUTgW3jBWZ9JgLVZYdMYTHC6LLAH",
+                Id = relayId,
+                PublicKey = relayKey.CreatePublicKey(),
                 Addresses = new MultiAddress[]
-                    {"/ip4/0.0.0.0/tcp/4002/p2p/QmXK9VBxaXFuuT29AaPUTgW3jBWZ9JgLVZYdMYTHC6LLAH"}
+                    {$"/ip4/0.0.0.0/tcp/4002/p2p/{relayId}"}
             };
             var mockRelayDialer = new MockDialer
             {
@@ -75,11 +84,14 @@ namespace PeerTalk.Relay
                 Dialer = mockRelayDialer
             };
 
+            var remoteKey = CryptoHelpers.GetKey();
+            var remoteId = remoteKey.Public.CreateKeyId();
             var remotePeer = new Peer
             {
-                Id = "QmbFgm5zan8P6eWWmeyfncR5feYEMPbht5b1FW1C37aQ7y",
+                Id = remoteId,
+                PublicKey = remoteKey.CreatePublicKey(),
                 Addresses = new MultiAddress[]
-                    {"/ip4/0.0.0.0/tcp/4003/p2p/QmbFgm5zan8P6eWWmeyfncR5feYEMPbht5b1FW1C37aQ7y"}
+                    {$"/ip4/0.0.0.0/tcp/4003/p2p/{remoteId}"}
             };
             var remoteDialer = new MockDialer
             {
@@ -96,7 +108,8 @@ namespace PeerTalk.Relay
                 IsIncoming = false,
                 Stream = localToRelayConnection.Item1,
                 LocalPeer = localPeer,
-                RemotePeer = relayPeer
+                RemotePeer = relayPeer,
+                LocalPeerKey = Key.CreatePrivateKey(localKey.Private)
             };
 
             var relayFromLocalPeerConnection = new PeerConnection
@@ -104,7 +117,8 @@ namespace PeerTalk.Relay
                 IsIncoming = true,
                 Stream = localToRelayConnection.Item2,
                 LocalPeer = relayPeer,
-                RemotePeer = localPeer
+                RemotePeer = localPeer,
+                LocalPeerKey = Key.CreatePrivateKey(relayKey.Private)
             };
 
             var remoteToRelayConnection = FullDuplexStream.CreatePair();
@@ -113,15 +127,33 @@ namespace PeerTalk.Relay
                 IsIncoming = false,
                 Stream = remoteToRelayConnection.Item1,
                 LocalPeer = remotePeer,
-                RemotePeer = relayPeer
+                RemotePeer = relayPeer,
+                LocalPeerKey = Key.CreatePrivateKey(remoteKey.Private)
             };
             var relayFromRemotePeerConnection = new PeerConnection()
             {
                 IsIncoming = true,
                 Stream = remoteToRelayConnection.Item2,
                 LocalPeer = relayPeer,
-                RemotePeer = remotePeer
+                RemotePeer = remotePeer,
+                LocalPeerKey = Key.CreatePrivateKey(relayKey.Private)
             };
+
+            // encrypt local to relay
+            var localEncryptTask = Task.Run(() => new Secio1().EncryptAsync(localToRelayPeerConnection));
+            var relayLocalEncryptTask = Task.Run(() =>
+                new Secio1().ProcessMessageAsync(relayFromLocalPeerConnection, relayFromLocalPeerConnection.Stream));
+
+            await localEncryptTask;
+            await relayLocalEncryptTask;
+
+            // encrypt relay to remote
+            var remoteEncryptTask = Task.Run(() => new Secio1().EncryptAsync(remoteToRelayPeerConnection));
+            var relayRemoteEncryptTask = Task.Run(() =>
+                new Secio1().ProcessMessageAsync(relayFromRemotePeerConnection, relayFromRemotePeerConnection.Stream));
+
+            await remoteEncryptTask;
+            await relayRemoteEncryptTask;
 
             mockLocalDialer.AddConnection(
                 relayPeer.Addresses.First(), 
@@ -140,7 +172,9 @@ namespace PeerTalk.Relay
                             // echo
                             byte[] buffer = new byte[1024];
                             var read = stream.Read(buffer, 0, 1024);
-                            stream.Write(buffer, 0, read);
+                            var request = Encoding.UTF8.GetString(buffer, 0, read);
+                            buffer = Encoding.UTF8.GetBytes(request + " back");
+                            stream.Write(buffer, 0, buffer.Length);
                             stream.Flush();
                         }
                     });
@@ -158,7 +192,7 @@ namespace PeerTalk.Relay
                 connection.Flush();
                 var response = new byte[1024];
                 var read = connection.Read(response, 0, 1024);
-                Assert.AreEqual("Hello", Encoding.UTF8.GetString(response.AsSpan().Slice(0, read).ToArray()));
+                Assert.AreEqual("Hello back", Encoding.UTF8.GetString(response.AsSpan().Slice(0, read).ToArray()));
             });
             var stopTask = Task.Run(() =>
                 remotePeerRelay.ProcessMessageAsync(remoteToRelayPeerConnection, remoteToRelayPeerConnection.Stream));
@@ -223,83 +257,86 @@ namespace PeerTalk.Relay
         [TestMethod]
         public async Task TestEndToEnd()
         {
-            var keyA = GetKey();
-            var keyB = GetKey();
-            var relayKey = GetKey();
-
-            Peer peerA = new Peer
+            var localKey = CryptoHelpers.GetKey();
+            var localId = localKey.Public.CreateKeyId();
+            var localPeer = new Peer
             {
-                AgentVersion = "A",
-                Id = CreateKeyId(keyA.Public),
-                PublicKey = CreatePublicKey(keyA)
-            };
-            Peer peerB = new Peer
-            {
-                AgentVersion = "B",
-                Id = CreateKeyId(keyB.Public),
-                PublicKey = CreatePublicKey(keyB)
-            };
-            Peer relay = new Peer
-            {
-                AgentVersion = "R",
-                Id = CreateKeyId(relayKey.Public),
-                PublicKey = CreatePublicKey(relayKey)
+                Id = localId,
+                PublicKey = localKey.CreatePublicKey()
             };
 
-            var swarmA = new Swarm()
+            var relayKey = CryptoHelpers.GetKey();
+            var relayId = relayKey.Public.CreateKeyId();
+            var relayPeer = new Peer
             {
-                LocalPeer = peerA,
-                LocalPeerKey = Key.CreatePrivateKey(keyA.Private)
+                Id = relayId,
+                PublicKey = relayKey.CreatePublicKey()
             };
-            var swarmB = new Swarm()
+
+            var remoteKey = CryptoHelpers.GetKey();
+            var remoteId = remoteKey.Public.CreateKeyId();
+            var remotePeer = new Peer
             {
-                LocalPeer = peerB,
-                LocalPeerKey = Key.CreatePrivateKey(keyB.Private)
+                Id = remoteId,
+                PublicKey = remoteKey.CreatePublicKey()
+            };
+
+            var localSwarm = new Swarm()
+            {
+                LocalPeer = localPeer,
+                LocalPeerKey = Key.CreatePrivateKey(localKey.Private)
+            };
+            var remoteSwarm = new Swarm()
+            {
+                LocalPeer = remotePeer,
+                LocalPeerKey = Key.CreatePrivateKey(remoteKey.Private)
             };
             var relaySwarm = new Swarm()
             {
-                LocalPeer = relay,
+                LocalPeer = relayPeer,
                 LocalPeerKey = Key.CreatePrivateKey(relayKey.Private)
             };
 
-            var pingA = new Ping1 { Swarm = swarmA };
+            var pingA = new Ping1 { Swarm = localSwarm };
             await pingA.StartAsync();
-            var pingB = new Ping1() { Swarm = swarmB };
+            var pingB = new Ping1() { Swarm = remoteSwarm };
             await pingB.StartAsync();
 
             // for debugging
-            swarmA.TransportConnectionTimeout = TimeSpan.FromHours(1);
-            swarmB.TransportConnectionTimeout = TimeSpan.FromHours(1);
+            localSwarm.TransportConnectionTimeout = TimeSpan.FromHours(1);
+            remoteSwarm.TransportConnectionTimeout = TimeSpan.FromHours(1);
             relaySwarm.TransportConnectionTimeout = TimeSpan.FromHours(1);
 
             // switch to fake tcp
-            SwapToFakeTcp(swarmA);
-            SwapToFakeTcp(swarmB);
+            SwapToFakeTcp(localSwarm);
+            SwapToFakeTcp(remoteSwarm);
             SwapToFakeTcp(relaySwarm);
 
-            await swarmA.StartAsync();
-            await swarmB.StartAsync();
+            await localSwarm.StartAsync();
+            await remoteSwarm.StartAsync();
             await relaySwarm.StartAsync();
 
-            await swarmA.StartListeningAsync("/ip4/0.0.0.0/tcp/4002");
-            await swarmB.StartListeningAsync("/ip4/0.0.0.0/tcp/4001");
+            await localSwarm.StartListeningAsync("/ip4/0.0.0.0/tcp/4001");
+            await remoteSwarm.StartListeningAsync("/ip4/0.0.0.0/tcp/4002");
             await relaySwarm.StartListeningAsync("/ip4/0.0.0.0/tcp/4003");
 
             var relayCollection = new RelayCollection();
-            relayCollection.Add(relay.Addresses.First(a => a.Protocols.Any(p => p.Name == "tcp")));
-            swarmA.EnableRelay(relayCollection);
-            swarmB.EnableRelay(relayCollection);
+            relayCollection.Add(relayPeer.Addresses.First(a => a.Protocols.Any(p => p.Name == "tcp")));
+            localSwarm.EnableRelay(relayCollection);
+            remoteSwarm.EnableRelay(relayCollection);
             relaySwarm.EnableRelay(relayCollection, hop: true);
             //await swarmA.StartListeningAsync("/p2p-circuit");
-            await swarmB.StartListeningAsync("/p2p-circuit");
+            await remoteSwarm.StartListeningAsync("/p2p-circuit");
             await relaySwarm.StartListeningAsync("/p2p-circuit");
 
-            var bRelayConn = await swarmB.ConnectAsync(relayCollection.RelayAddresses.First());
+            // set up connection from remote to the relay
+            var bRelayConn = await remoteSwarm.ConnectAsync(relayCollection.RelayAddresses.First());
 
-            var connectionToBThroughRelay = await swarmA.ConnectAsync(new MultiAddress($"/p2p-circuit/p2p/{peerB.Id}"));
+            // connect to remote through swarm
+            var connectionToBThroughRelay = await localSwarm.ConnectAsync(new MultiAddress($"/p2p-circuit/p2p/{remotePeer.Id}"));
             Assert.IsNotNull(connectionToBThroughRelay);
 
-            var response = await pingA.PingAsync(peerB.Id);
+            var response = await pingA.PingAsync(remotePeer.Id);
             Assert.IsTrue(response.All(p => p.Success));
 
 
@@ -346,27 +383,27 @@ namespace PeerTalk.Relay
         //[TestMethod()]
         public async Task RelayConnectionWorks()
         {
-            var keyA = GetKey();
-            var keyB = GetKey();
-            var relayKey = GetKey();
+            var keyA = CryptoHelpers.GetKey();
+            var keyB = CryptoHelpers.GetKey();
+            var relayKey = CryptoHelpers.GetKey();
 
             Peer peerA = new Peer
             {
                 AgentVersion = "A",
-                Id = CreateKeyId(keyA.Public),
-                PublicKey = CreatePublicKey(keyA)
+                Id = keyA.Public.CreateKeyId(),
+                PublicKey = keyA.CreatePublicKey()
             };
             Peer peerB = new Peer
             {
                 AgentVersion = "B",
-                Id = CreateKeyId(keyB.Public),
-                PublicKey = CreatePublicKey(keyB)
+                Id = keyB.Public.CreateKeyId(),
+                PublicKey = keyB.CreatePublicKey()
             };
             Peer relay = new Peer
             {
                 AgentVersion = "R",
-                Id = CreateKeyId(relayKey.Public),
-                PublicKey = CreatePublicKey(relayKey)
+                Id = relayKey.Public.CreateKeyId(),
+                PublicKey = relayKey.CreatePublicKey()
             };
 
             var swarmA = new Swarm()
@@ -422,90 +459,9 @@ namespace PeerTalk.Relay
             Assert.IsTrue(response.All(p => p.Success));
         }
 
-        private AsymmetricCipherKeyPair GetKey()
-        {
-            var keyAGen = GeneratorUtilities.GetKeyPairGenerator("RSA");
-            keyAGen.Init(new RsaKeyGenerationParameters(BigInteger.ValueOf(0x10001), new SecureRandom(), 2048, 25));
-            var asymmetricCipherKeyPair = keyAGen.GenerateKeyPair();
-            return asymmetricCipherKeyPair;
-        }
+        
 
-        string CreatePublicKey(AsymmetricCipherKeyPair key)
-        {
-            var spki = SubjectPublicKeyInfoFactory
-                .CreateSubjectPublicKeyInfo(key.Public)
-                .GetDerEncoded();
-            // Add protobuf cruft.
-            var publicKey = new PublicKeyMessage()
-            {
-                Data = spki
-            };
-            if (key.Public is RsaKeyParameters)
-                publicKey.Type = KeyType.RSA;
-            else if (key.Public is Ed25519PublicKeyParameters)
-                publicKey.Type = KeyType.Ed25519;
-            else if (key.Public is ECPublicKeyParameters)
-                publicKey.Type = KeyType.Secp256k1;
-            else
-                throw new NotSupportedException($"The key type {key.Public.GetType().Name} is not supported.");
+        
 
-            using (var ms = new MemoryStream())
-            {
-                ProtoBuf.Serializer.Serialize(ms, publicKey);
-                return Convert.ToBase64String(ms.ToArray());
-            }
-        }
-
-        MultiHash CreateKeyId(AsymmetricKeyParameter key)
-        {
-            var spki = SubjectPublicKeyInfoFactory
-                .CreateSubjectPublicKeyInfo(key)
-                .GetDerEncoded();
-
-            // Add protobuf cruft.
-            var publicKey = new PublicKeyMessage()
-            {
-                Data = spki
-            };
-            if (key is RsaKeyParameters)
-                publicKey.Type = KeyType.RSA;
-            else if (key is ECPublicKeyParameters)
-                publicKey.Type = KeyType.Secp256k1;
-            else if (key is Ed25519PublicKeyParameters)
-                publicKey.Type = KeyType.Ed25519;
-            else
-                throw new NotSupportedException($"The key type {key.GetType().Name} is not supported.");
-
-            using (var ms = new MemoryStream())
-            {
-                ProtoBuf.Serializer.Serialize(ms, publicKey);
-
-                // If the length of the serialized bytes <= 42, then we compute the "identity" multihash of 
-                // the serialized bytes. The idea here is that if the serialized byte array 
-                // is short enough, we can fit it in a multihash verbatim without having to 
-                // condense it using a hash function.
-                var alg = (ms.Length <= 48) ? "identity" : "sha2-256";
-
-                ms.Position = 0;
-                return MultiHash.ComputeHash(ms, alg);
-            }
-        }
-
-        enum KeyType
-        {
-            RSA = 0,
-            Ed25519 = 1,
-            Secp256k1 = 2,
-            ECDH = 4,
-        }
-
-        [ProtoContract]
-        class PublicKeyMessage
-        {
-            [ProtoMember(1, IsRequired = true)]
-            public KeyType Type { get; set; }
-            [ProtoMember(2, IsRequired = true)]
-            public byte[] Data { get; set; }
-        }
     }
 }
