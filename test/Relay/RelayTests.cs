@@ -33,7 +33,7 @@ namespace PeerTalk.Relay
         {
             var log = new LoggerConfiguration()
                 .WriteTo.File(new CompactJsonFormatter(),
-                    @"F:\projects\peer-talk\log.txt",
+                    @"C:\repos\peer-talk\log.txt",
                     flushToDiskInterval: TimeSpan.FromSeconds(1),
                     rollingInterval: RollingInterval.Day)
                 .MinimumLevel.Verbose()

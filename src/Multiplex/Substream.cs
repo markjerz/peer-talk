@@ -136,34 +136,54 @@ namespace PeerTalk.Multiplex
         /// <inheritdoc />
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            int total = 0;
-            while (count > 0 && !eos)
+            // we only call ReceiveAsync if there's no data in the buffer
+            // two levels of buffer, the bufferblock containing incoming messages
+            // and the current inBlock which is due to the previous call to ReadAsync being maxed out
+            if (inBlock == null)
             {
-                // Does the current block have some unread data?
-                if (inBlock != null && inBlockOffset < inBlock.Length)
-                {
-                    var n = Math.Min(inBlock.Length - inBlockOffset, count);
-                    Array.Copy(inBlock, inBlockOffset, buffer, offset, n);
-                    total += n;
-                    count -= n;
-                    offset += n;
-                    inBlockOffset += n;
-                }
-                // Otherwise, wait for a new block of data.
-                else
+                if (!inBlocks.TryReceive(null, out inBlock))
                 {
                     try
                     {
                         inBlock = await inBlocks.ReceiveAsync(cancellationToken).ConfigureAwait(false);
-                        inBlockOffset = 0;
                     }
-                    catch (InvalidOperationException) // no more data!
+                    catch (InvalidOperationException) // no more data
                     {
                         eos = true;
+                        return 0;
                     }
                 }
+
+                inBlockOffset = 0;
             }
-            return total;
+
+            var totalRead = 0;
+            while (inBlock != null)
+            {
+                // copy from this block to the buffer
+                var bytesRead = Math.Min(inBlock.Length - inBlockOffset, count - totalRead);
+                Array.Copy(inBlock, inBlockOffset, buffer, offset, bytesRead);
+                inBlockOffset += bytesRead;
+                offset += bytesRead;
+                totalRead += bytesRead;
+                if (inBlockOffset == inBlock.Length) // used up this block
+                {
+                    inBlockOffset = 0;
+                    inBlock = null;
+                }
+
+                if (totalRead < count)
+                {
+                    inBlocks.TryReceive(null, out inBlock);
+                    inBlockOffset = 0;
+                }
+                else
+                {
+                    return totalRead;
+                }
+            }
+
+            return totalRead;
         }
         
         /// <inheritdoc />
