@@ -7,11 +7,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using PeerTalk.SecureCommunication;
 
 namespace PeerTalk.Multiplex
 {
@@ -321,45 +319,7 @@ namespace PeerTalk.Multiplex
         /// </returns>
         public Task<IDisposable> AcquireWriteAccessAsync()
         {
-            var parentStream = this.Channel;
-            Muxer topLevelMuxer = this;
-            log.Trace("Searching for parent muxer");
-            while (true)
-            {
-                if (parentStream is Substream substream)
-                {
-                    log.Trace($"Found parent substream {substream.Name}");
-                    topLevelMuxer = substream.Muxer;
-                    parentStream = substream.Muxer.Channel;
-                    continue;
-                }
-
-                var channelFieldOrProp = parentStream.GetType().GetMembers(BindingFlags.DeclaredOnly
-                                                                           | BindingFlags.Instance
-                                                                           | BindingFlags.NonPublic
-                                                                           | BindingFlags.Public)
-                    .Where(m => 
-                        (m is PropertyInfo p && p.PropertyType == typeof(Stream))
-                    || (m is FieldInfo f && f.FieldType == typeof(Stream)))
-                    .SingleOrDefault();
-                if (channelFieldOrProp != null)
-                {
-                    if (channelFieldOrProp is PropertyInfo propertyInfo)
-                    {
-                        parentStream = propertyInfo.GetValue(parentStream) as Stream;
-                    } else if (channelFieldOrProp is FieldInfo fieldInfo)
-                    {
-                        parentStream = fieldInfo.GetValue(parentStream) as Stream;
-                    }
-
-                    log.Trace($"Found {parentStream.GetType().Name}");
-                    continue;
-                }
-                
-                break;
-            }
-
-            return topLevelMuxer.ChannelWriteLock.LockAsync();
+            return ChannelWriteLock.LockAsync();
         }
     }
 }
