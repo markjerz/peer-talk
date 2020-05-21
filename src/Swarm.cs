@@ -15,6 +15,7 @@ using PeerTalk.Protocols;
 using PeerTalk.Cryptography;
 using Ipfs.CoreApi;
 using Nito.AsyncEx;
+using PeerTalk.Multiplex;
 using PeerTalk.Relay;
 
 namespace PeerTalk
@@ -904,6 +905,8 @@ namespace PeerTalk
                     log.Debug($"remote connect from {remote}");
                 }
 
+                var subStream = stream as Substream; // if we're connecting over the top of another peerconnection we need to tell it to stop processing
+
                 // TODO: Check the policies
 
                 var connection = new PeerConnection
@@ -951,6 +954,8 @@ namespace PeerTalk
                 {
                     ConnectionEstablished?.Invoke(this, connection);
                 }
+
+                subStream?.Muxer.Connection.NotifyStreamIsProxy(subStream);
             }
             catch (Exception e)
             {

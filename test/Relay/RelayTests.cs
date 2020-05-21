@@ -139,22 +139,6 @@ namespace PeerTalk.Relay
                 LocalPeerKey = Key.CreatePrivateKey(relayKey.Private)
             };
 
-            // encrypt local to relay
-            var localEncryptTask = Task.Run(() => new Secio1().EncryptAsync(localToRelayPeerConnection));
-            var relayLocalEncryptTask = Task.Run(() =>
-                new Secio1().ProcessMessageAsync(relayFromLocalPeerConnection, relayFromLocalPeerConnection.Stream));
-
-            await localEncryptTask;
-            await relayLocalEncryptTask;
-
-            // encrypt relay to remote
-            var remoteEncryptTask = Task.Run(() => new Secio1().EncryptAsync(remoteToRelayPeerConnection));
-            var relayRemoteEncryptTask = Task.Run(() =>
-                new Secio1().ProcessMessageAsync(relayFromRemotePeerConnection, relayFromRemotePeerConnection.Stream));
-
-            await remoteEncryptTask;
-            await relayRemoteEncryptTask;
-
             mockLocalDialer.AddConnection(
                 relayPeer.Addresses.First(), 
                 localToRelayPeerConnection);
@@ -167,23 +151,21 @@ namespace PeerTalk.Relay
                 {
                     Task.Run(() =>
                     {
-                        while (true)
-                        {
-                            // echo
-                            byte[] buffer = new byte[1024];
-                            var read = stream.Read(buffer, 0, 1024);
-                            var request = Encoding.UTF8.GetString(buffer, 0, read);
-                            buffer = Encoding.UTF8.GetBytes(request + " back");
-                            stream.Write(buffer, 0, buffer.Length);
-                            stream.Flush();
-                        }
+                        // echo
+                        byte[] buffer = new byte[1024];
+                        var read = stream.Read(buffer, 0, 1024);
+                        var request = Encoding.UTF8.GetString(buffer, 0, read);
+                        buffer = Encoding.UTF8.GetBytes(request + " back");
+                        stream.Write(buffer, 0, buffer.Length);
+                        stream.Flush();
                     });
                     return Task.CompletedTask;
                 }, CancellationToken.None);
             
             var remoteRelayAddress = new MultiAddress($"{relayPeer.Addresses.First()}/p2p-circuit/p2p/{remotePeer.Id}");
+            var relayCancellationTokenSource = new CancellationTokenSource();
             var relayTask = Task.Run(() =>
-                hopRelay.ProcessMessageAsync(relayFromLocalPeerConnection, relayFromLocalPeerConnection.Stream));
+                hopRelay.ProcessMessageAsync(relayFromLocalPeerConnection, relayFromLocalPeerConnection.Stream, relayCancellationTokenSource.Token));
             var connectTask = Task.Run(async () =>
             {
                 var connection = await localPeerRelay.ConnectAsync(remoteRelayAddress);
@@ -196,11 +178,11 @@ namespace PeerTalk.Relay
             });
             var stopTask = Task.Run(() =>
                 remotePeerRelay.ProcessMessageAsync(remoteToRelayPeerConnection, remoteToRelayPeerConnection.Stream));
-            
-            
-            await relayTask;
-            await connectTask;
+
             await stopTask;
+            await connectTask;
+            relayCancellationTokenSource.Cancel();
+            await relayTask;
         }
 
         class MockDialer : IDialer
@@ -252,8 +234,7 @@ namespace PeerTalk.Relay
 
             public Peer LocalPeer { get; set; }
         }
-
-
+        
         [TestMethod]
         public async Task TestEndToEnd()
         {
@@ -379,89 +360,5 @@ namespace PeerTalk.Relay
                 return int.Parse(address.Protocols.First(p => p.Name == "tcp").Value);
             }
         }
-
-        //[TestMethod()]
-        public async Task RelayConnectionWorks()
-        {
-            var keyA = CryptoHelpers.GetKey();
-            var keyB = CryptoHelpers.GetKey();
-            var relayKey = CryptoHelpers.GetKey();
-
-            Peer peerA = new Peer
-            {
-                AgentVersion = "A",
-                Id = keyA.Public.CreateKeyId(),
-                PublicKey = keyA.CreatePublicKey()
-            };
-            Peer peerB = new Peer
-            {
-                AgentVersion = "B",
-                Id = keyB.Public.CreateKeyId(),
-                PublicKey = keyB.CreatePublicKey()
-            };
-            Peer relay = new Peer
-            {
-                AgentVersion = "R",
-                Id = relayKey.Public.CreateKeyId(),
-                PublicKey = relayKey.CreatePublicKey()
-            };
-
-            var swarmA = new Swarm()
-            {
-                LocalPeer = peerA,
-                LocalPeerKey = Key.CreatePrivateKey(keyA.Private)
-            };
-            var swarmB = new Swarm()
-            {
-                LocalPeer = peerB,
-                LocalPeerKey = Key.CreatePrivateKey(keyB.Private)
-            };
-            var relaySwarm = new Swarm()
-            {
-                LocalPeer = relay,
-                LocalPeerKey = Key.CreatePrivateKey(relayKey.Private)
-            };
-
-            var pingA = new Ping1 {Swarm = swarmA};
-            await pingA.StartAsync();
-            var pingB = new Ping1() {Swarm = swarmB};
-            await pingB.StartAsync();
-
-            // for debugging
-            swarmA.TransportConnectionTimeout = TimeSpan.FromHours(1);
-            swarmB.TransportConnectionTimeout = TimeSpan.FromHours(1);
-            relaySwarm.TransportConnectionTimeout = TimeSpan.FromHours(1);
-
-            await swarmA.StartAsync();
-            await swarmB.StartAsync();
-            await relaySwarm.StartAsync();
-
-            // connect b to relay
-            await swarmA.StartListeningAsync("/ip4/0.0.0.0/tcp/4002");
-            await swarmB.StartListeningAsync("/ip4/0.0.0.0/tcp/4001");
-            await relaySwarm.StartListeningAsync("/ip4/0.0.0.0/tcp/4003");
-
-            var relayCollection = new RelayCollection();
-            relayCollection.Add(relay.Addresses.First(a => a.Protocols.Any(p => p.Name == "tcp")));
-            swarmA.EnableRelay(relayCollection);
-            swarmB.EnableRelay(relayCollection);
-            relaySwarm.EnableRelay(relayCollection, hop: true);
-            //await swarmA.StartListeningAsync("/p2p-circuit");
-            await swarmB.StartListeningAsync("/p2p-circuit");
-            await relaySwarm.StartListeningAsync("/p2p-circuit");
-
-            var bRelayConn = await swarmB.ConnectAsync(relayCollection.RelayAddresses.First());
-
-            var connectionToBThroughRelay = await swarmA.ConnectAsync(new MultiAddress($"/p2p-circuit/p2p/{peerB.Id}"));
-            Assert.IsNotNull(connectionToBThroughRelay);
-
-            var response = await pingA.PingAsync(peerB.Id);
-            Assert.IsTrue(response.All(p => p.Success));
-        }
-
-        
-
-        
-
     }
 }

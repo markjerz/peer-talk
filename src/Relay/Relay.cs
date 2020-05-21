@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Common.Logging;
 using Ipfs;
 using Makaretu.Dns.Resolving;
+using PeerTalk.Multiplex;
 using PeerTalk.Protocols;
 using PeerTalk.Transports;
 using ProtoBuf;
@@ -243,53 +244,46 @@ namespace PeerTalk.Relay
                 log.Trace($"Received success from STOP request");
                 await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
                 log.Trace($"Piping the streams together");
-                var pipeTask = Task.Run(async () =>
-                {
-                    var srcToDst = PipeAsync(srcStream, dstStream);
-                    var dstToSrc = PipeAsync(dstStream, srcStream);
-                    await srcToDst;
-                    await dstToSrc;
-                });
+                var srcToDst = PipeAsync(srcStream, dstStream);
+                var dstToSrc = PipeAsync(dstStream, srcStream);
+                await srcToDst;
+                await dstToSrc;
             }
 
             async Task PipeAsync(Stream inStream, Stream outStream)
             {
-                try
+                while (!cancel.IsCancellationRequested)
                 {
-                    while (!cancel.IsCancellationRequested)
+                    var buffer = new byte[1024];
+                    var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
+                    log.Trace($"Received message from peer");
+                    if (bytesRead > 0)
                     {
-                        var buffer = new byte[1024];
-                        var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
-                        log.Trace($"Received message from peer");
                         await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
                         await outStream.FlushAsync(cancel);
                     }
                 }
-                catch
-                {
-                    throw;
-                }
             }
         }
 
-        private async Task HandleStopAsync(CircuitRelayMessage request, Stream srcStream, CancellationToken cancel)
+        private async Task HandleStopAsync(CircuitRelayMessage request, Stream relayStream, CancellationToken cancel)
         {
             if (!request.SrcPeer.TryToPeer(out var srcPeer))
             {
-                await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.HOP_SRC_MULTIADDR_INVALID), srcStream, cancel);
+                await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.HOP_SRC_MULTIADDR_INVALID), relayStream, cancel);
                 return;
             }
             
             if (!request.DstPeer.TryToPeer(out var dstPeer))
             {
-                await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.HOP_DST_MULTIADDR_INVALID), srcStream, cancel);
+                await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.HOP_DST_MULTIADDR_INVALID), relayStream, cancel);
                 return;
             }
 
             log.Trace($"Received STOP request from {srcPeer.Id}");
-            await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
+            await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), relayStream, cancel);
             log.Trace("Initiating relay connection");
-            await this.handler(srcStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
+            await this.handler(relayStream, dstPeer.Addresses.First(), srcPeer.Addresses.First());
         }
 
         private Task HandleStatusAsync(CircuitRelayMessage request)
