@@ -27,7 +27,7 @@ namespace PeerTalk.Routing
         {
             this.Key = key;
             this.Value = value;
-            this.TimeReceived = XmlConvert.ToString(DateTime.UtcNow, XmlDateTimeSerializationMode.Utc);
+            this.TimeReceived = FormatDateTime(DateTime.UtcNow);
         }
 
         /// <summary>
@@ -47,6 +47,16 @@ namespace PeerTalk.Routing
         /// </summary>
         [ProtoMember(5)]
         public string TimeReceived { get; set; }
+
+        /// <summary>
+        /// TODO
+        /// </summary>
+        /// <param name="dateTime"></param>
+        /// <returns></returns>
+        public static string FormatDateTime(DateTime dateTime)
+        {
+            return XmlConvert.ToString(dateTime, XmlDateTimeSerializationMode.Utc);
+        }
     }
 
     /// <summary>

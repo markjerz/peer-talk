@@ -37,7 +37,7 @@ namespace PeerTalk.Routing
         /// <summary>
         /// Provides storage for DHT key value pairs
         /// </summary>
-        public IDataStore<byte[], byte[]> DataStore { get; set; }
+        public IDataStore<byte[], DhtRecord> DataStore { get; set; }
 
         /// <summary>
         ///  Routing information on peers.
@@ -103,6 +103,9 @@ namespace PeerTalk.Routing
                         break;
                     case MessageType.GetValue:
                         response = await ProcessGetValueAsync(connection.RemotePeer, request, response, cancel);
+                        break;
+                    case MessageType.PutValue:
+                        response = await ProcessPutValueAsync(connection.RemotePeer, request, response, cancel);
                         break;
                     default:
                         log.Debug($"unknown {request.Type} from {connection.RemotePeer}");
@@ -342,6 +345,18 @@ namespace PeerTalk.Routing
             return request;
         }
 
+        private async Task<DhtMessage> ProcessPutValueAsync(Peer remotePeer, DhtMessage request, DhtMessage response,
+            CancellationToken cancel)
+        {
+            if (request.Record?.Value != null)
+            {
+                await this.PutLocalAsync(request.Key, request.Record.Value, cancel);
+            }
+
+            response.Record = request.Record;
+            return response;
+        }
+
         private async Task<DhtMessage> ProcessGetValueAsync(Peer remotePeer, DhtMessage request, DhtMessage response,
             CancellationToken cancel)
         {
@@ -354,7 +369,7 @@ namespace PeerTalk.Routing
                 return response;
             }
 
-            byte[] localValue = null;
+            DhtRecord localValue = null;
             if (this.DataStore != null)
             {
                 localValue = await this.DataStore.GetAsync(request.Key, cancel);
@@ -362,7 +377,10 @@ namespace PeerTalk.Routing
 
             if (localValue != null)
             {
-                response.Record = new DhtRecordMessage(request.Key, localValue);
+                response.Record = new DhtRecordMessage(request.Key, localValue.Value)
+                {
+                    TimeReceived = DhtRecordMessage.FormatDateTime(localValue.TimeReceived)
+                };
             }
 
             AddCloserPeers(response, new MultiHash(request.Key));
@@ -541,7 +559,10 @@ namespace PeerTalk.Routing
                             {
                                 Key = key, 
                                 Type = MessageType.GetValue, 
-                                Record = new DhtRecordMessage(key, localValue) // note that we let the time default to NowUtc, if the selector ever takes account of this we should tweak here
+                                Record = new DhtRecordMessage(key, localValue.Value)
+                                {
+                                    TimeReceived = DhtRecordMessage.FormatDateTime(localValue.TimeReceived)
+                                }
                             }, 
                             this.Swarm.LocalPeer));
                 }
@@ -572,10 +593,7 @@ namespace PeerTalk.Routing
             CancellationToken cancel)
         {
             // update locally
-            if (this.DataStore != null)
-            {
-                await this.DataStore.PutAsync(key, bestValue, cancel);
-            }
+            await this.PutLocalAsync(key, bestValue, cancel);
 
             // update out of date peers
             var record = new DhtRecordMessage(key, bestValue);
@@ -587,6 +605,14 @@ namespace PeerTalk.Routing
             }
         }
 
+        private async Task PutLocalAsync(byte[] key, byte[] value, CancellationToken cancel)
+        {
+            if (this.DataStore != null)
+            {
+                await this.DataStore.PutAsync(key, new DhtRecord(value), cancel);
+            }
+        }
+
         /// <inheritdoc />
         public async Task PutAsync(byte[] key, byte[] value, CancellationToken cancel = new CancellationToken())
         {
@@ -594,10 +620,8 @@ namespace PeerTalk.Routing
             var record = new DhtRecordMessage(key, value);
 
             // store locally
-            if (this.DataStore != null) {
-                await this.DataStore.PutAsync(key, value, cancel);
-            }
-
+            await this.PutLocalAsync(key, value, cancel);
+            
             // put record to the closest peers
             var counterAll = 0;
             var counterSuccess = 0;
