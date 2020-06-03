@@ -1,9 +1,9 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Ipfs;
-using Makaretu.Dns.Resolving;
 
 namespace PeerTalk.Relay
 {
@@ -12,12 +12,12 @@ namespace PeerTalk.Relay
     /// </summary>
     public class RelayCollection
     {
-        private readonly ConcurrentSet<MultiAddress> relayAddresses = new ConcurrentSet<MultiAddress>();
+        private readonly ConcurrentDictionary<MultiAddress, object> relayAddresses = new ConcurrentDictionary<MultiAddress, object>();
 
         /// <summary>
         /// Get the list of known relay addresses
         /// </summary>
-        public IEnumerable<MultiAddress> RelayAddresses => new ReadOnlyCollection<MultiAddress>(relayAddresses.ToList());
+        public IEnumerable<MultiAddress> RelayAddresses => new ReadOnlyCollection<MultiAddress>(relayAddresses.Keys.ToList());
 
         /// <summary>
         /// Add a new address to the relay collection
@@ -26,7 +26,7 @@ namespace PeerTalk.Relay
         /// <returns></returns>
         public bool Add(MultiAddress relayAddress)
         {
-            return relayAddresses.Add(relayAddress);
+            return relayAddresses.TryAdd(relayAddress, relayAddress);
         }
 
         /// <summary>
@@ -36,7 +36,7 @@ namespace PeerTalk.Relay
         /// <returns></returns>
         public bool Remove(MultiAddress relayAddress)
         {
-            return relayAddresses.Remove(relayAddress);
+            return relayAddresses.TryRemove(relayAddress, out var _);
         }
 
         private static Lazy<RelayCollection> defaultCollection = new Lazy<RelayCollection>(() =>

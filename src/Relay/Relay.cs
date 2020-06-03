@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Common.Logging;
 using Ipfs;
-using Makaretu.Dns.Resolving;
 using PeerTalk.Multiplex;
 using PeerTalk.Protocols;
 using PeerTalk.Transports;
