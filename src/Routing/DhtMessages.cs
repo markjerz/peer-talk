@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml;
 
 namespace PeerTalk.Routing
 {
@@ -18,6 +19,18 @@ namespace PeerTalk.Routing
     public class DhtRecordMessage
     {
         /// <summary>
+        /// Creates a new DhtRecordMessage using the current UTC time
+        /// </summary>
+        /// <param name="key"></param>
+        /// <param name="value"></param>
+        public DhtRecordMessage(byte[] key, byte[] value)
+        {
+            this.Key = key;
+            this.Value = value;
+            this.TimeReceived = XmlConvert.ToString(DateTime.UtcNow, XmlDateTimeSerializationMode.Utc);
+        }
+
+        /// <summary>
         ///   TODO
         /// </summary>
         [ProtoMember(1)]
@@ -28,18 +41,6 @@ namespace PeerTalk.Routing
         /// </summary>
         [ProtoMember(2)]
         public byte[] Value { get; set; }
-
-        /// <summary>
-        ///   TODO
-        /// </summary>
-        [ProtoMember(3)]
-        public byte[] Author { get; set; }
-
-        /// <summary>
-        ///   TODO
-        /// </summary>
-        [ProtoMember(4)]
-        public byte[] Signature { get; set; }
 
         /// <summary>
         ///   TODO
